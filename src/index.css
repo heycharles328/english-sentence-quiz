@@ -1,0 +1,35 @@
+/* src/index.css */
+
+/* 1) Tailwind 지시자 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 2) 최소 전역 스타일만 유지 */
+:root {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+/* 페이지 전체 배경/글자색 정도만 지정 */
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #eef2ff; /* 아주 옅은 인디고 계열 (배경색) */
+  color: #0f172a;      /* 딥 네이비 텍스트 */
+}
+
+/* 링크 기본 스타일 (선택) */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* 버튼은 Tailwind 클래스만 쓰고,
+   여기서는 기본 스타일 지정 안 함 */
