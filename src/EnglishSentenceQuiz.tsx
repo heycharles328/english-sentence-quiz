@@ -10,6 +10,7 @@ type Category = {
   id: number;
   name: string;
   color: string;
+  sort_order: number | null;
 };
 
 type Sentence = {
@@ -17,6 +18,7 @@ type Sentence = {
   categoryId: number;
   korean: string;
   english: string;
+  sort_order: number | null;
 };
 
 const EnglishSentenceQuiz: React.FC = () => {
@@ -24,6 +26,8 @@ const EnglishSentenceQuiz: React.FC = () => {
   const [sentences, setSentences] = useState<Sentence[]>([]);
   const [currentView, setCurrentView] = useState<View>('home');
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
+  const [draggedCategoryId, setDraggedCategoryId] = useState<number | null>(null);
+  const [isDraggingCategory, setIsDraggingCategory] = useState(false);
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [quizSentences, setQuizSentences] = useState<Sentence[]>([]);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -51,14 +55,16 @@ const EnglishSentenceQuiz: React.FC = () => {
         const { data: categoriesData, error: catError } = await supabase
           .from('categories')
           .select('*')
-          .order('id', { ascending: true });
+          .order('sort_order', { ascending: true }) // 먼저 sort_order 기준
+          .order('id', { ascending: true });        // sort_order가 null일 때를 위한 보조 정렬
 
         if (catError) throw catError;
 
         const { data: sentencesData, error: senError } = await supabase
           .from('sentences')
           .select('*')
-          .order('id', { ascending: true });
+          .order('sort_order', { ascending: true }) // 먼저 sort_order 기준
+          .order('id', { ascending: true });        // sort_order가 null일 때를 위한 보조 정렬
 
         if (senError) throw senError;
 
@@ -67,6 +73,7 @@ const EnglishSentenceQuiz: React.FC = () => {
             id: c.id,
             name: c.name,
             color: c.color,
+            sort_order: c.sort_order ?? null,
           })) ?? [];
 
         const mappedSentences: Sentence[] =
@@ -75,6 +82,7 @@ const EnglishSentenceQuiz: React.FC = () => {
             categoryId: s.category_id,
             korean: s.korean,
             english: s.english,
+            sort_order: s.sort_order ?? null,
           })) ?? [];
 
         setCategories(mappedCategories);
@@ -96,16 +104,22 @@ const EnglishSentenceQuiz: React.FC = () => {
   const addCategory = async () => {
     if (!newCategoryName.trim()) return;
 
+    // 현재 프론트에서 보이는 순서 기준으로 "맨 뒤"에 붙이기
+    const nextOrder = categories.length;
+
     const newCategory: Category = {
       id: Date.now(),
       name: newCategoryName.trim(),
       color: `hsl(${Math.random() * 360}, 70%, 60%)`,
+      sort_order: nextOrder,
     };
 
     const { error } = await supabase.from('categories').insert({
       id: newCategory.id,
       name: newCategory.name,
       color: newCategory.color,
+      sort_order: newCategory.sort_order,
+      // (나중에 로그인 붙이면 여기 owner: currentUser 처럼 필드 하나 더 넣으면 됨)
     });
 
     if (error) {
@@ -168,11 +182,18 @@ const EnglishSentenceQuiz: React.FC = () => {
     if (!selectedCategory) return;
     if (!newSentence.korean.trim() || !newSentence.english.trim()) return;
 
+    // 현재 선택된 카테고리 안에서만 길이 계산
+    const categorySentences = sentences.filter(
+      (s) => s.categoryId === selectedCategory
+    );
+    const nextOrder = categorySentences.length;
+
     const sentence: Sentence = {
       id: Date.now(),
       categoryId: selectedCategory,
       korean: newSentence.korean.trim(),
       english: newSentence.english.trim(),
+      sort_order: nextOrder,
     };
 
     const { error } = await supabase.from('sentences').insert({
@@ -180,6 +201,7 @@ const EnglishSentenceQuiz: React.FC = () => {
       category_id: sentence.categoryId,
       korean: sentence.korean,
       english: sentence.english,
+      sort_order: sentence.sort_order,
     });
 
     if (error) {
@@ -241,6 +263,65 @@ const EnglishSentenceQuiz: React.FC = () => {
   };
 
   // ---------------------------
+  // 카테고리 드래그 앤 드롭
+  // ---------------------------
+
+  const handleCategoryDragStart = (
+    e: React.DragEvent<HTMLDivElement>,
+    category: Category
+  ) => {
+    setDraggedCategoryId(category.id);
+    setIsDraggingCategory(true);
+
+    // 일부 브라우저는 setData가 없으면 드래그를 무시하기도 해서 안전하게 넣어줌
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(category.id));
+  };
+
+  const handleCategoryDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleCategoryDrop = (
+    e: React.DragEvent<HTMLDivElement>,
+    targetCategory: Category
+  ) => {
+    e.preventDefault();
+    if (draggedCategoryId === null || draggedCategoryId === targetCategory.id) {
+      setIsDraggingCategory(false);
+      return;
+    }
+
+    const newList = [...categories];
+    const fromIndex = newList.findIndex((c) => c.id === draggedCategoryId);
+    const toIndex = newList.findIndex((c) => c.id === targetCategory.id);
+
+    if (fromIndex === -1 || toIndex === -1) {
+      setIsDraggingCategory(false);
+      return;
+    }
+
+    const [moved] = newList.splice(fromIndex, 1);
+    newList.splice(toIndex, 0, moved);
+
+    // 1) 프론트 상태 반영
+    setCategories(newList);
+    setDraggedCategoryId(null);
+    setIsDraggingCategory(false);
+
+    // 2) DB에 순서 저장
+    saveCategoryOrder(newList).catch((err) => {
+      console.error('카테고리 순서 저장 중 에러:', err);
+    });
+  };
+
+  const handleCategoryDragEnd = () => {
+    setDraggedCategoryId(null);
+    setIsDraggingCategory(false);
+  };
+
+  // ---------------------------
   // 드래그 앤 드롭 (순서만 프론트에서 변경, DB에는 순서 저장 안 함)
   // ---------------------------
 
@@ -282,8 +363,14 @@ const EnglishSentenceQuiz: React.FC = () => {
     reordered.splice(draggedIndex, 1);
     reordered.splice(targetIndex, 0, draggedItem);
 
+    // 1) 프론트 상태 반영
     setSentences([...otherSentences, ...reordered]);
     setDraggedItem(null);
+
+    // 2) DB에 현재 카테고리 문장 순서 저장
+    saveSentenceOrder(reordered).catch((err) => {
+      console.error('문장 순서 저장 중 에러:', err);
+    });
   };
 
   // ---------------------------
@@ -315,6 +402,70 @@ const EnglishSentenceQuiz: React.FC = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
+  };
+
+  // ---------------------------
+  // 카테고리 순서 저장 (id별 update)
+  // ---------------------------
+
+  const saveCategoryOrder = async (newList: Category[]) => {
+    try {
+      // 인덱스를 sort_order로 다시 매기기
+      const updates = newList.map((c, index) => ({
+        id: c.id,
+        sort_order: index,
+      }));
+
+      console.log('카테고리 순서 업데이트 시도:', updates);
+
+      // 각 카테고리별로 확실하게 update
+      for (const u of updates) {
+        const { error } = await supabase
+          .from('categories')
+          .update({ sort_order: u.sort_order })
+          .eq('id', u.id);
+
+        if (error) {
+          console.error('카테고리 순서 저장 실패 (id:', u.id, '):', error);
+          return; // 하나라도 실패하면 중단
+        }
+      }
+
+      console.log('카테고리 순서 저장 완료');
+    } catch (err) {
+      console.error('카테고리 순서 저장 중 예외 발생:', err);
+    }
+  };
+
+  // ---------------------------
+  // 문장 순서 저장 (카테고리별, id별 update)
+  // ---------------------------
+
+  const saveSentenceOrder = async (reordered: Sentence[]) => {
+    try {
+      const updates = reordered.map((s, index) => ({
+        id: s.id,
+        sort_order: index,
+      }));
+
+      console.log('문장 순서 업데이트 시도:', updates);
+
+      for (const u of updates) {
+        const { error } = await supabase
+          .from('sentences')
+          .update({ sort_order: u.sort_order })
+          .eq('id', u.id);
+
+        if (error) {
+          console.error('문장 순서 저장 실패 (id:', u.id, '):', error);
+          return;
+        }
+      }
+
+      console.log('문장 순서 저장 완료');
+    } catch (err) {
+      console.error('문장 순서 저장 중 예외 발생:', err);
+    }
   };
 
   // ---------------------------
@@ -378,9 +529,16 @@ const EnglishSentenceQuiz: React.FC = () => {
               return (
                 <div
                   key={category.id}
-                  className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition-shadow cursor-pointer"
+                  draggable
+                  onDragStart={(e) => handleCategoryDragStart(e, category)}
+                  onDragOver={handleCategoryDragOver}
+                  onDrop={(e) => handleCategoryDrop(e, category)}
+                  onDragEnd={handleCategoryDragEnd}
+                  className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition-shadow cursor-move"
                   style={{ borderLeft: `6px solid ${category.color}` }}
                   onClick={() => {
+                    // 드래그 중일 때는 클릭으로 manage 화면으로 넘어가지 않게 막기
+                    if (isDraggingCategory) return;
                     setSelectedCategory(category.id);
                     setCurrentView('manage');
                   }}
