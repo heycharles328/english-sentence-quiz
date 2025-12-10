@@ -24,7 +24,6 @@ const EnglishSentenceQuiz: React.FC = () => {
   const [sentences, setSentences] = useState<Sentence[]>([]);
   const [currentView, setCurrentView] = useState<View>('home');
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
-  const [quizMode, setQuizMode] = useState<QuizMode>(null);
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [quizSentences, setQuizSentences] = useState<Sentence[]>([]);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -340,7 +339,6 @@ const EnglishSentenceQuiz: React.FC = () => {
 
     setQuizSentences(quizList);
     setCurrentQuizIndex(0);
-    setQuizMode(mode);
     setCurrentView('quiz');
     setShowAnswer(false);
   };
