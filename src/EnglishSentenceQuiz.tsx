@@ -6,6 +6,16 @@ import { supabase } from './supabaseClient';
 type View = 'home' | 'manage' | 'quiz-select' | 'quiz';
 type QuizMode = 'sequential' | 'random' | null;
 
+type User = {
+  id: string;      // 로그인 아이디
+  name: string;    // 화면에 보여줄 이름
+};
+
+const USERS = [
+  { id: 'heycharles', password: '91ckfTM#@*', name: 'Charles' },
+  { id: 'guest',      password: '1111',       name: 'Guest' },
+];
+
 type Category = {
   id: number;
   name: string;
@@ -21,7 +31,46 @@ type Sentence = {
   sort_order: number | null;
 };
 
+type ButtonIconVariant = 'edit' | 'delete';
+
+type ButtonIconProps = {
+  variant: ButtonIconVariant;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  ariaLabel?: string;
+};
+
+const ButtonIcon: React.FC<ButtonIconProps> = ({
+  variant,
+  onClick,
+  ariaLabel,
+}) => {
+  const baseClass =
+    'p-2 rounded-md transition-colors flex items-center justify-center';
+
+  const variantClass =
+    variant === 'edit'
+      ? 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'
+      : 'text-red-500 hover:text-red-600 hover:bg-red-50';
+
+  const Icon = variant === 'edit' ? Edit2 : Trash2;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      className={`${baseClass} ${variantClass}`}
+    >
+      <Icon size={20} />
+    </button>
+  );
+};
+
 const EnglishSentenceQuiz: React.FC = () => {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginForm, setLoginForm] = useState({ id: '', password: '' });
+  const [loginError, setLoginError] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [sentences, setSentences] = useState<Sentence[]>([]);
   const [currentView, setCurrentView] = useState<View>('home');
@@ -48,23 +97,57 @@ const EnglishSentenceQuiz: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [showExitQuiz, setShowExitQuiz] = useState(false);
 
+  // ---------------------------
+  // 로그인 관련
+  // ---------------------------
+  const handleLogin = () => {
+    const found = USERS.find(
+      (u) => u.id === loginForm.id && u.password === loginForm.password
+    );
+
+    if (!found) {
+      setLoginError('아이디 또는 비밀번호가 올바르지 않습니다.');
+      return;
+    }
+
+    setCurrentUser({ id: found.id, name: found.name });
+    setShowLoginModal(false);
+    setLoginForm({ id: '', password: '' });
+    setLoginError('');
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setSelectedCategory(null);
+    setCurrentView('home');
+  };
+
   // 1) 최초 로딩 시 Supabase에서 categories + sentences 읽어오기
   useEffect(() => {
     const loadData = async () => {
       try {
+        // 로그인 안 되어 있으면 리스트 비우고 리턴
+        if (!currentUser) {
+          setCategories([]);
+          setSentences([]);
+          return;
+        }
+
         const { data: categoriesData, error: catError } = await supabase
           .from('categories')
           .select('*')
-          .order('sort_order', { ascending: true }) // 먼저 sort_order 기준
-          .order('id', { ascending: true });        // sort_order가 null일 때를 위한 보조 정렬
+          .eq('owner', currentUser.id)            // ★ owner 필터
+          .order('sort_order', { ascending: true })
+          .order('id', { ascending: true });
 
         if (catError) throw catError;
 
         const { data: sentencesData, error: senError } = await supabase
           .from('sentences')
           .select('*')
-          .order('sort_order', { ascending: true }) // 먼저 sort_order 기준
-          .order('id', { ascending: true });        // sort_order가 null일 때를 위한 보조 정렬
+          .eq('owner', currentUser.id)            // ★ owner 필터
+          .order('sort_order', { ascending: true })
+          .order('id', { ascending: true });
 
         if (senError) throw senError;
 
@@ -95,16 +178,19 @@ const EnglishSentenceQuiz: React.FC = () => {
     };
 
     loadData();
-  }, []);
+  }, [currentUser]); // ★ 의존성 변경
 
   // ---------------------------
   // 카테고리 CRUD
   // ---------------------------
 
   const addCategory = async () => {
+    if (!currentUser) {
+      alert('로그인 후 사용 가능합니다.');
+      return;
+    }
     if (!newCategoryName.trim()) return;
 
-    // 현재 프론트에서 보이는 순서 기준으로 "맨 뒤"에 붙이기
     const nextOrder = categories.length;
 
     const newCategory: Category = {
@@ -119,7 +205,7 @@ const EnglishSentenceQuiz: React.FC = () => {
       name: newCategory.name,
       color: newCategory.color,
       sort_order: newCategory.sort_order,
-      // (나중에 로그인 붙이면 여기 owner: currentUser 처럼 필드 하나 더 넣으면 됨)
+      owner: currentUser.id,        // ★ owner 저장
     });
 
     if (error) {
@@ -179,10 +265,13 @@ const EnglishSentenceQuiz: React.FC = () => {
   // ---------------------------
 
   const addSentence = async () => {
+    if (!currentUser) {
+      alert('로그인 후 사용 가능합니다.');
+      return;
+    }
     if (!selectedCategory) return;
     if (!newSentence.korean.trim() || !newSentence.english.trim()) return;
 
-    // 현재 선택된 카테고리 안에서만 길이 계산
     const categorySentences = sentences.filter(
       (s) => s.categoryId === selectedCategory
     );
@@ -202,6 +291,7 @@ const EnglishSentenceQuiz: React.FC = () => {
       korean: sentence.korean,
       english: sentence.english,
       sort_order: sentence.sort_order,
+      owner: currentUser.id,          // ★ owner 저장
     });
 
     if (error) {
@@ -513,75 +603,183 @@ const EnglishSentenceQuiz: React.FC = () => {
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4 md:p-8">
         <div className="max-w-4xl mx-auto">
           <div className="bg-white rounded-2xl shadow-xl p-6 md:p-8 mb-6">
-            <h1 className="text-3xl md:text-4xl font-bold text-gray-800 mb-2">
-              영어 문장 퀴즈
-            </h1>
-            <p className="text-gray-600">
-              카테고리를 선택하거나 새로 만들어보세요
-            </p>
-          </div>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-3xl md:text-4xl font-bold text-gray-800 mb-2">
+                  영어 문장 퀴즈
+                </h1>
+                <p className="text-gray-600">
+                  카테고리를 선택하거나 새로 만들어보세요
+                </p>
+                {currentUser && (
+                  <p className="text-sm text-gray-500 mt-2">
+                    {currentUser.name}님, 환영합니다!
+                  </p>
+                )}
+              </div>
 
-          <div className="grid grid-cols-1 gap-4 mb-6">
-            {categories.map((category) => {
-              const count = sentences.filter(
-                (s) => s.categoryId === category.id
-              ).length;
-              return (
-                <div
-                  key={category.id}
-                  draggable
-                  onDragStart={(e) => handleCategoryDragStart(e, category)}
-                  onDragOver={handleCategoryDragOver}
-                  onDrop={(e) => handleCategoryDrop(e, category)}
-                  onDragEnd={handleCategoryDragEnd}
-                  className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition-shadow cursor-move"
-                  style={{ borderLeft: `6px solid ${category.color}` }}
-                  onClick={() => {
-                    // 드래그 중일 때는 클릭으로 manage 화면으로 넘어가지 않게 막기
-                    if (isDraggingCategory) return;
-                    setSelectedCategory(category.id);
-                    setCurrentView('manage');
-                  }}
-                >
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="text-xl font-bold text-gray-800">
-                      {category.name}
-                    </h3>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          editCategory(category);
-                        }}
-                        className="text-blue-600 hover:text-blue-800 transition-colors"
-                      >
-                        <Edit2 size={18} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeletingCategory(category.id);
-                        }}
-                        className="text-red-500 hover:text-red-700 transition-colors"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+              <button
+                onClick={() => {
+                  if (currentUser) {
+                    handleLogout();
+                  } else {
+                    setLoginError('');
+                    setLoginForm({ id: '', password: '' });
+                    setShowLoginModal(true);
+                  }
+                }}
+                className="px-3 py-2 text-sm rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-medium"
+              >
+                {currentUser ? '로그아웃' : '로그인'}
+              </button>
+            </div>
+          </div>
+          {/* 카테고리 리스트 (로그인 O / X 분기) */}
+          {currentUser ? (
+            <div className="grid grid-cols-1 gap-4 mb-6">
+              {categories.map((category) => {
+                const count = sentences.filter(
+                  (s) => s.categoryId === category.id
+                ).length;
+
+                return (
+                  <div
+                    key={category.id}
+                    draggable
+                    onDragStart={(e) => handleCategoryDragStart(e, category)}
+                    onDragOver={handleCategoryDragOver}
+                    onDrop={(e) => handleCategoryDrop(e, category)}
+                    onDragEnd={handleCategoryDragEnd}
+                    className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition-shadow cursor-move"
+                    style={{ borderLeft: `6px solid ${category.color}` }}
+                    onClick={() => {
+                      if (isDraggingCategory) return;
+                      setSelectedCategory(category.id);
+                      setCurrentView('manage');
+                    }}
+                  >
+                    {/* 카테고리 카드 내용 (제목, 개수, 편집/삭제 아이콘 등) */}
+                      <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-800">{category.name}</h3>
+                        <p className="text-sm text-gray-500">
+                          {sentences.filter((sentence) => sentence.categoryId === category.id).length} 문장
+                        </p>
+                      </div>
+                      <div className="flex gap-3">
+                        <ButtonIcon
+                          variant="edit"
+                          ariaLabel="카테고리 수정"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            editCategory(category);
+                          }}
+                        />
+                        <ButtonIcon
+                          variant="delete"
+                          ariaLabel="카테고리 삭제"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDeletingCategory(category.id);
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
-                  <p className="text-gray-600">{count}개 문장</p>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="mb-6 bg-white rounded-xl p-6 text-center text-gray-500">
+              로그인 후 카테고리와 문장이 표시됩니다.
+            </div>
+          )}
 
+          {/* 새 카테고리 추가 버튼 (로그인 전 비활성화) */}
           <button
-            onClick={() => setShowCategoryInput(true)}
-            className="w-full bg-indigo-600 text-white py-4 rounded-xl font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2 shadow-lg"
+            onClick={() => {
+              if (!currentUser) {
+                alert('로그인 후 사용 가능합니다.');
+                return;
+              }
+              setShowCategoryInput(true);
+            }}
+            disabled={!currentUser}
+            className={`w-full py-4 rounded-xl font-semibold flex items-center justify-center gap-2 shadow-lg transition-colors
+              ${
+                currentUser
+                  ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              }`}
           >
             <Plus size={24} />
             새 카테고리 추가
           </button>
+          {/* 로그인 모달 */}
+          {showLoginModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold text-gray-800">로그인</h3>
+                  <button
+                    onClick={() => setShowLoginModal(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
 
+                <div className="space-y-4 mb-2">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      아이디
+                    </label>
+                    <input
+                      type="text"
+                      value={loginForm.id}
+                      onChange={(e) =>
+                        setLoginForm((prev) => ({ ...prev, id: e.target.value }))
+                      }
+                      className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      비밀번호
+                    </label>
+                    <input
+                      type="password"
+                      value={loginForm.password}
+                      onChange={(e) =>
+                        setLoginForm((prev) => ({ ...prev, password: e.target.value }))
+                      }
+                      className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                {loginError && (
+                  <p className="text-sm text-red-500 mb-3">{loginError}</p>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowLoginModal(false)}
+                    className="flex-1 bg-gray-200 text-gray-700 py-2.5 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={handleLogin}
+                    className="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg font-semibold hover:bg-indigo-700 transition-colors"
+                  >
+                    로그인
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {/* 카테고리 추가 모달 */}
           {showCategoryInput && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -774,20 +972,18 @@ const EnglishSentenceQuiz: React.FC = () => {
                         <span className="font-semibold text-indigo-600 flex-shrink-0">
                           #{index + 1}
                         </span>
-                        <div className="flex gap-2 flex-shrink-0">
-                          <button
-                            onClick={() => editSentence(sentence.id)}
-                            className="text-blue-600 hover:text-blue-800 transition-colors"
-                          >
-                            <Edit2 size={18} />
-                          </button>
-                          <button
-                            onClick={() => setDeletingSentence(sentence.id)}
-                            className="text-red-500 hover:text-red-700 transition-colors"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
+                          <div className="flex gap-3">
+                            <ButtonIcon
+                              variant="edit"
+                              ariaLabel="문장 수정"
+                              onClick={() => editSentence(sentence.id)}
+                            />
+                            <ButtonIcon
+                              variant="delete"
+                              ariaLabel="문장 삭제"
+                              onClick={() => setDeletingSentence(sentence.id)}
+                            />
+                          </div>
                       </div>
                       <p className="text-gray-800 font-medium mb-1 break-words whitespace-pre-wrap">
                         {sentence.korean}
