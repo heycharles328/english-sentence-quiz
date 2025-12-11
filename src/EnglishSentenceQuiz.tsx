@@ -663,7 +663,7 @@ const EnglishSentenceQuiz: React.FC = () => {
                       <div>
                         <h3 className="text-lg font-bold text-gray-800">{category.name}</h3>
                         <p className="text-sm text-gray-500">
-                          {sentences.filter((sentence) => sentence.categoryId === category.id).length} 문장
+                           {count} 문장
                         </p>
                       </div>
                       <div className="flex gap-3">
